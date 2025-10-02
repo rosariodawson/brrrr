@@ -1,0 +1,575 @@
+{
+  "meta": {
+    "schema_version": "1.0",
+    "coinalyze_rules": {
+      "character_limit_hint": 300,
+      "no_conditionals": ["IF","AND","OR","SIGN"],
+      "no_abs_or_pow": ["ABS","^"],
+      "indexing": "[0]=last, [-1]=prev; ranges ascending like [-5:-1]",
+      "builtins_ok": ["SMA","EMA","AVG","SUM","MIN","MAX","ROC","RSI","CVD","CVDSPOT","CHANGE","PCHANGE"],
+      "denominator_guard": "wrap divisors using +1 or MAX(x,1)",
+      "normalization_hint": "prefer per-volume/per-range normalization to avoid scale bias"
+    },
+    "field_conventions": {
+      "id": "stable slug for cross-refs",
+      "name": "human label",
+      "alias": "short UI label",
+      "formula": "validated Coinalyze expression",
+      "goal": "what this filter spots",
+      "timeframe": "primary TF(s) referenced",
+      "tags": "keywords to group/route",
+      "thresholds": "suggested levels user cares about"
+    }
+  },
+  "filters": [
+    {
+      "id": "fut_spot_vol_ratio_trap",
+      "name": "Fut / Spot Vol ratio (>4 trap)",
+      "alias": "Fut/Spot Vol ratio",
+      "formula": "(AVG(vol_5m[-5:-1])+1)/(AVG(volspot_5m[-5:-1])+1)",
+      "goal": "Detect futures-led imbalance vs spot (potential trap if too high).",
+      "timeframe": ["5m"],
+      "tags": ["imbalance","trap","vol"],
+      "thresholds": {">": 4}
+    },
+    {
+      "id": "buysellvolume_value",
+      "name": "BuySellVolume value (>0.2 pump)",
+      "alias": "BuySellVol",
+      "formula": "(SUM(volbuy_5m[0:-9]) - SUM(volsell_5m[0:-9])) / (AVG(vol_5m[0:-9])+1)",
+      "goal": "Net taker flow bias over ~45m.",
+      "timeframe": ["5m"],
+      "tags": ["flow","delta"],
+      "thresholds": {">": 0.2}
+    },
+    {
+      "id": "core_trio_3",
+      "name": "Core Trio 3 > 10",
+      "alias": "Core Trio 3",
+      "formula": "PCHANGE(oi_1h[0,-12])",
+      "goal": "12h OI growth impulse.",
+      "timeframe": ["1h"],
+      "tags": ["oi","trend"],
+      "thresholds": {">": 10}
+    },
+    {
+      "id": "core_trio_1",
+      "name": "Core Trio 1 > 15",
+      "alias": "Core Trio 1",
+      "formula": "PCHANGE(CVDSPOT('1h',20,true)[0,-12])",
+      "goal": "12h spot accumulation impulse.",
+      "timeframe": ["1h"],
+      "tags": ["cvdspot","accumulation"],
+      "thresholds": {">": 15}
+    },
+    {
+      "id": "core_trio_2",
+      "name": "Core Trio 2 < -15",
+      "alias": "Core Trio 2",
+      "formula": "PCHANGE(CVD('1h',20,true)[0,-12])",
+      "goal": "12h perp flow dump pressure.",
+      "timeframe": ["1h"],
+      "tags": ["cvd","dump"],
+      "thresholds": {"<": -15}
+    },
+    {
+      "id": "cvd_div_fut_sell_spot_hold",
+      "name": "CVD divergence (fut sell, spot not supporting)",
+      "alias": "CVD Div",
+      "formula": "((CVDSPOT('5m',20,true)[0]-CVDSPOT('5m',20,true)[-5])/(AVG(volspot_5m[-5:-1])+1)) - ((CVD('5m',20,true)[0]-CVD('5m',20,true)[-5])/(AVG(vol_5m[-5:-1])+1))",
+      "goal": "Spot vs perp 25m divergence (pump>0.1 / dump<-0.1).",
+      "timeframe": ["5m"],
+      "tags": ["divergence","flow"],
+      "thresholds": {">": 0.1, "<": -0.1}
+    },
+    {
+      "id": "cvd_slope_spot_25m",
+      "name": "CVD slope Spot >0 (25m)",
+      "alias": "Spot CVD slope 25m",
+      "formula": "(CVDSPOT('5m',20,true)[0]-CVDSPOT('5m',20,true)[-5])/(AVG(volspot_5m[-5:-1])+1)",
+      "goal": "Normalized spot CVD slope over last ~25m.",
+      "timeframe": ["5m"],
+      "tags": ["slope","spot","cvd"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "cvd_spot_led_diverg_1h",
+      "name": "CVD Spot led divergence > 0",
+      "alias": "CVD spot led diverg",
+      "formula": "PCHANGE(CVDSPOT('1h',20,true)[0,-1]) - PCHANGE(CVD('1h',20,true)[0,-1])",
+      "goal": "Spot leading perps (positive sustainable).",
+      "timeframe": ["1h"],
+      "tags": ["divergence","lead"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "daily_spot_accum",
+      "name": "Daily Spot Accumulation (>15)",
+      "alias": "Daily Spot Accumulation",
+      "formula": "PCHANGE(CVDSPOT('1d',20,true)[0,-5])",
+      "goal": "5-day spot CVD momentum.",
+      "timeframe": ["1d"],
+      "tags": ["htf","accumulation"],
+      "thresholds": {">": 15}
+    },
+    {
+      "id": "exit_leverage_exhaust_ratio",
+      "name": "EXIT: Leverage Exhaustion Ratio (>1.5)",
+      "alias": "Lev Exhaust Ratio",
+      "formula": "((PCHANGE(price_5m[0,-3]))*fr_5m[0]*1000)/((PCHANGE(oi_5m[0,-3]))+1)",
+      "goal": "Detect funding-driven leverage move outrunning OI (exit risk).",
+      "timeframe": ["5m"],
+      "tags": ["exit","risk","funding","oi"],
+      "thresholds": {">": 1.5}
+    },
+    {
+      "id": "explosion_oi_exhaust_top",
+      "name": "Explosion OI Exhaustion at Top",
+      "alias": "OI score <0 = pump over",
+      "formula": "(CHANGE(oi_1h[0,-1])/(AVG(oi_1h[-3:-1])+1)) - PCHANGE(price_1h[0,-1])",
+      "goal": "If OI fades while price stretched, top risk.",
+      "timeframe": ["1h"],
+      "tags": ["exhaustion","top"],
+      "thresholds": {"<": 0}
+    },
+    {
+      "id": "explosion_spot_cvd_lead",
+      "name": "Explosion Pre-Pump Predictor (Spot CVD Lead)",
+      "alias": "Spot CVD Divergence Lead",
+      "formula": "PCHANGE(CVDSPOT('1h',20,true)[0,-1]) - PCHANGE(price_1h[0,-1])",
+      "goal": "Spot momentum leading price (early tell).",
+      "timeframe": ["1h"],
+      "tags": ["lead","predictive"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "explosion_pump_top_hit",
+      "name": "Explosion Pump reached top",
+      "alias": "Pump over if < -1",
+      "formula": "PCHANGE(CVD('1h',20,true)[0,-1]) - (PCHANGE(price_1h[0,-1])*2)",
+      "goal": "Perp flow lagging strong price = blow-off risk.",
+      "timeframe": ["1h"],
+      "tags": ["exhaustion","blowoff"],
+      "thresholds": {"<": -1}
+    },
+    {
+      "id": "explosive_breakout_long_cons",
+      "name": "Explosive Breakout from Long Consolidation",
+      "alias": "Explosive Breakout",
+      "formula": "(PCHANGE(oi_1h[0,-3]) + PCHANGE(CVDSPOT('1h',20,true)[0,-3])) / (((MAX(price_1h[-4:-1]) - MIN(price_1h[-4:-1])) / (SMA(price_1h,4)[0] + 0.001))*10)",
+      "goal": "Detect explosive pivot after tight range with OI+spot impulse.",
+      "timeframe": ["1h"],
+      "tags": ["breakout","consolidation"],
+      "thresholds": {">": 0.5}
+    },
+    {
+      "id": "funding_rate_anomaly",
+      "name": "Funding Rate Anomaly",
+      "alias": "FR Anomaly",
+      "formula": "AVG(fr_1h[0:-11])",
+      "goal": "Smoothed funding context (bias/pressure).",
+      "timeframe": ["1h"],
+      "tags": ["funding","context"],
+      "thresholds": {}
+    },
+    {
+      "id": "healthy_leverage_growth",
+      "name": "Healthy Leverage Growth > 0.05",
+      "alias": "Healthy Leverage Growth",
+      "formula": "PCHANGE(oi_1h,6)",
+      "goal": "OI % change over 6 bars (6h).",
+      "timeframe": ["1h"],
+      "tags": ["oi","growth"],
+      "thresholds": {">": 0.05}
+    },
+    {
+      "id": "hourly_bid_side_pressure",
+      "name": "Hourly Bid-Side Pressure > 1.5",
+      "alias": "Bid-Side Pressure",
+      "formula": "SUM(volbuy_1h[0:-5]) / (SUM(volsell_1h[0:-5])+1)",
+      "goal": "Aggressive buy dominance over ~5h.",
+      "timeframe": ["1h"],
+      "tags": ["imbalance","flow"],
+      "thresholds": {">": 1.5}
+    },
+    {
+      "id": "hourly_volume_persistence",
+      "name": "Hourly Volume Persistence > 2",
+      "alias": "Vol Persistence",
+      "formula": "(AVG(vol_1h[0:-3])+1) / (AVG(vol_1h[-24:-4])+1)",
+      "goal": "Sustained elevated volume vs 1d lookback.",
+      "timeframe": ["1h"],
+      "tags": ["persistence","volume"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "spot_accum_12h",
+      "name": "HTF spot CVD accumulation (12h) >0",
+      "alias": "Spot Accumulation 12hr",
+      "formula": "PCHANGE(CVDSPOT('1h',20,true)[0,-12])",
+      "goal": "12h spot accumulation drift.",
+      "timeframe": ["1h"],
+      "tags": ["htf","cvdspot"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "htf_stealth_acc_breakout",
+      "name": "HTF Stealth Accumulation Breakout > 8",
+      "alias": "HTF Stealth Acc Breakout",
+      "formula": "PCHANGE(oi_1h[0,-4]) + PCHANGE(CVDSPOT('1h',20,true)[0,-10]) - ((PCHANGE(price_1h[0,-4])*PCHANGE(price_1h[0,-4]))/100)",
+      "goal": "OI + spot strength with flat price (breakout prep).",
+      "timeframe": ["1h"],
+      "tags": ["stealth","breakout"],
+      "thresholds": {">": 8}
+    }
+  ]
+}
+{
+  "filters_append": [
+    {
+      "id": "htf_vol_weighted_oi_breakout",
+      "name": "HTF Volume-Weighted OI Breakout",
+      "alias": "VW-OI Breakout",
+      "formula": "PCHANGE(oi_1h[0,-1]) * (vol_1h[0]/(AVG(vol_1h[0:-10])+1))",
+      "goal": "Flags OI jump amplified by current hourly volume.",
+      "timeframe": ["1h"],
+      "tags": ["oi","volume","breakout"],
+      "thresholds": {}
+    },
+    {
+      "id": "l1_short_spot_cvd_accel_down",
+      "name": "L1 SHORT (Spot CVD acceleration down)",
+      "alias": "L1 SHORT accel",
+      "formula": "PCHANGE(CVDSPOT('1h',10,true)[0,-1]) - PCHANGE(CVDSPOT('1h',10,true)[-1,-2])",
+      "goal": "Detects fresh downside acceleration in spot CVD.",
+      "timeframe": ["1h"],
+      "tags": ["cvdspot","accel","short"],
+      "thresholds": {"<": 0}
+    },
+    {
+      "id": "layer1_spot_cvd_vs_price_diverg_1d",
+      "name": "Layer 1: Spot CVD vs Price Divergence (>10)",
+      "alias": "L1 CVDvPrice",
+      "formula": "PCHANGE(CVDSPOT('1d',20,true)[0,-9])",
+      "goal": "Daily spot accumulation impulse vs relatively flat price.",
+      "timeframe": ["1d"],
+      "tags": ["htf","divergence","cvdspot"],
+      "thresholds": {">": 10}
+    },
+    {
+      "id": "layer1_oi_growth_cons_pt1",
+      "name": "Layer 1: OI Growth in Consolidation pt1 (>15)",
+      "alias": "L1 OI acc pt1",
+      "formula": "PCHANGE(oi_1d[0,-9])",
+      "goal": "Sustained OI build over 9 days.",
+      "timeframe": ["1d"],
+      "tags": ["oi","accumulation","htf"],
+      "thresholds": {">": 15}
+    },
+    {
+      "id": "layer1_oi_growth_cons_pt2",
+      "name": "Layer 1: OI Growth in Consolidation pt2 (price > -5)",
+      "alias": "L1 price drift pt2",
+      "formula": "PCHANGE(price_1d[0,-9])",
+      "goal": "Confirms price hasn’t dumped while OI built.",
+      "timeframe": ["1d"],
+      "tags": ["validation","price"],
+      "thresholds": {">": -5}
+    },
+    {
+      "id": "layer1_oi_growth_cons_pt3",
+      "name": "Layer 1: OI Growth in Consolidation pt3 (price < 5)",
+      "alias": "L1 price drift pt3",
+      "formula": "PCHANGE(price_1d[0,-9])",
+      "goal": "Ensures price stayed relatively flat during OI build.",
+      "timeframe": ["1d"],
+      "tags": ["validation","flat","price"],
+      "thresholds": {"<": 5}
+    },
+    {
+      "id": "layer2_persistent_bid_imbalance",
+      "name": "Layer 2: Persistent Bid-Side Imbalance (>1.5)",
+      "alias": "L2 bid-side pressure",
+      "formula": "SUM(volbuy_1h[0:-5])/(SUM(volsell_1h[0:-5])+1)",
+      "goal": "Multi-hour taker buy dominance.",
+      "timeframe": ["1h"],
+      "tags": ["imbalance","flow"],
+      "thresholds": {">": 1.5}
+    },
+    {
+      "id": "layer2_volume_persistence_pre_breakout",
+      "name": "Layer 2: Volume Persistence Pre-Breakout (>2)",
+      "alias": "L2 Vol Persist",
+      "formula": "vol_1h[0]/(AVG(vol_1h[-10:-1])+1)",
+      "goal": "Hour’s volume is >2x recent mean into breakout.",
+      "timeframe": ["1h"],
+      "tags": ["volume","persistence","setup"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "long_squeeze_exhaustion_1h",
+      "name": "Long-Squeeze Exhaustion 1h (>+2 = long reversal soon)",
+      "alias": "Long Sq Exhaust",
+      "formula": "(-PCHANGE(price_1h[0,-1])) - PCHANGE(oi_1h[0,-1])",
+      "goal": "Price drop + OI drop => squeezed longs closing.",
+      "timeframe": ["1h"],
+      "tags": ["squeeze","exhaustion","reversal"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "ltf_momentum_ignition",
+      "name": "LTF Momentum Ignition (>10)",
+      "alias": "LTF Ignite",
+      "formula": "(PCHANGE(CVDSPOT('5m',30,true)[0,-1])*1.5) + PCHANGE(oi_5m[0,-1])",
+      "goal": "Short-term spot push + OI jump ignition.",
+      "timeframe": ["5m"],
+      "tags": ["ignition","cvdspot","oi"],
+      "thresholds": {">": 10}
+    },
+    {
+      "id": "ltf_momentum_ignition_score",
+      "name": "LTF Momentum Ignition Score (>3.5)",
+      "alias": "LTF Ignite Score",
+      "formula": "(PCHANGE(price_5m[0,-1])*1.5) + (vol_5m[0]/(SMA(vol_5m,20)[0]+1))",
+      "goal": "Price impulse plus current-volume boost.",
+      "timeframe": ["5m"],
+      "tags": ["momentum","volume"],
+      "thresholds": {">": 3.5}
+    },
+    {
+      "id": "nihilus_2",
+      "name": "Nihilus 2 (>1.4)",
+      "alias": "Nihilus 2",
+      "formula": "(PCHANGE(oi_5m[0,-5])*1.5) + PCHANGE(CVDSPOT('5m',20,true)[0,-1]) - (fr_5m[0]*500)",
+      "goal": "LTF OI + spot thrust minus funding headwind.",
+      "timeframe": ["5m"],
+      "tags": ["nihilus","oi","cvdspot","funding"],
+      "thresholds": {">": 1.4}
+    },
+    {
+      "id": "nihilus_3",
+      "name": "Nihilus 3 (>2)",
+      "alias": "Nihilus 3",
+      "formula": "(PCHANGE(CVDSPOT('1h',20,true)[0,-1]) - PCHANGE(price_1h[0,-1])) * (SMA(volspot_1h,3)[0]/(AVG(vol_1h[-10:-1])+1))",
+      "goal": "Spot leads price on 1h and spot volume is elevated.",
+      "timeframe": ["1h"],
+      "tags": ["nihilus","divergence","spot-led"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "nihilus_vol_1",
+      "name": "Nihilus vol 1 (>2)",
+      "alias": "Nihilus vol 1",
+      "formula": "vol_1d[0]/(SMA(vol_1d,20)[0]+1)",
+      "goal": "Daily volume expansion vs 20d average.",
+      "timeframe": ["1d"],
+      "tags": ["volume","htf","expansion"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "oi_fuel_1hr_change",
+      "name": "OI Fuel 1hr change",
+      "alias": "OI Fuel Δ1h",
+      "formula": "PCHANGE(oi_1h,0,-1) - PCHANGE(oi_1h,-1,-2)",
+      "goal": "Acceleration of OI over the last hour vs prior hour.",
+      "timeframe": ["1h"],
+      "tags": ["oi","acceleration"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "oi_fuel_meter",
+      "name": "OI Fuel Meter (≥2.2 explosion / 1.4–2.1 trend / <1.4 skip)",
+      "alias": "OI Fuel Meter",
+      "formula": "(PCHANGE(oi_5m[0,-5])*1.5) + PCHANGE(CVDSPOT('5m',20,true)[0,-1]) - (fr_5m[0]*500)",
+      "goal": "Unified LTF ‘fuel’ score blending OI, spot, funding.",
+      "timeframe": ["5m"],
+      "tags": ["scoring","ignition","risk"],
+      "thresholds": {">=": 2.2, "mid": [1.4, 2.1], "<": 1.4}
+    },
+    {
+      "id": "oi_multi_tf_score",
+      "name": "OI Multi-TF Score",
+      "alias": "OI Multi-TF",
+      "formula": "(PCHANGE(oi_5m[0,-5]) + PCHANGE(oi_1h[0,-1]) + PCHANGE(oi_1h[0,-3]))/3",
+      "goal": "Blended OI momentum across 5m/1h windows.",
+      "timeframe": ["5m","1h"],
+      "tags": ["oi","composite","momentum"],
+      "thresholds": {">": 0.6, "<": -0.6}
+    },
+    {
+      "id": "oi_unwind_trigger",
+      "name": "OI stall / unwind trigger (>0 = cascade dump starting)",
+      "alias": "OI unwind",
+      "formula": "-PCHANGE(oi_5m[0,-3])",
+      "goal": "Detects OI momentum flip to unwind on LTF.",
+      "timeframe": ["5m"],
+      "tags": ["risk","unwind","ltfrev"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "oi_dollar_pulse",
+      "name": "OI-Dollar Pulse (normalize by notional)",
+      "alias": "OI$ Pulse",
+      "formula": "((oi_5m[0]*price_5m[0]) - (oi_5m[-3]*price_5m[-3]))/((oi_5m[-3]*price_5m[-3])+1)*100",
+      "goal": "Change in OI notional over last 15m (percent).",
+      "timeframe": ["5m"],
+      "tags": ["oi","notional","normalization"],
+      "thresholds": {">": 0}
+    },
+    {
+      "id": "predicted_funding_rate_change_1h",
+      "name": "Predicted funding rate change 1h",
+      "alias": "pred fr Δ1h",
+      "formula": "PCHANGE(pfr_1h,0,-1)",
+      "goal": "Momentum in predicted funding (pressure shift).",
+      "timeframe": ["1h"],
+      "tags": ["funding","context"],
+      "thresholds": {}
+    },
+    {
+      "id": "price_change_15m",
+      "name": "Price Chg 15 m",
+      "alias": "ROC 15m",
+      "formula": "ROC(price_5m,3)[0]",
+      "goal": "3x5m price rate-of-change.",
+      "timeframe": ["5m"],
+      "tags": ["momentum","price"],
+      "thresholds": {}
+    }
+  ]
+}
+{
+  "filters_append": [
+    {
+      "id": "spot_vol_expansion_vs_avg",
+      "name": "Spot Volume Expansion vs Average (>1.1)",
+      "alias": "Spot Vol Expansion",
+      "formula": "(SMA(volspot_5m,3)[0])/(AVG(volspot_5m[-20:-1])+1)",
+      "goal": "Spot volume is expanding vs recent baseline (3-bar vs ~20 bars).",
+      "timeframe": ["5m"],
+      "tags": ["spot","volume","expansion"],
+      "thresholds": {">": 1.1}
+    },
+    {
+      "id": "spot_led_commitment_score",
+      "name": "Spot-Led Commitment Score (>2)",
+      "alias": "Spot-Led Commitment",
+      "formula": "(PCHANGE(CVDSPOT('1h',20,true)[0,-1]) - PCHANGE(price_1h[0,-1])) * (SMA(volspot_1h,3)[0]/(AVG(vol_1h[-10:-1])+1))",
+      "goal": "Spot leads perps on momentum and is backed by elevated spot volume.",
+      "timeframe": ["1h"],
+      "tags": ["spot-led","divergence","volume"],
+      "thresholds": {">": 2}
+    },
+    {
+      "id": "stealth_accum_signal",
+      "name": "Stealth Accumulation Signal (>5)",
+      "alias": "Stealth accum",
+      "formula": "PCHANGE(oi_1h[0,-1]) - ((PCHANGE(price_1h[0,-1])*PCHANGE(price_1h[0,-1]))/100)",
+      "goal": "ABS-free proxy: rewards OI build while penalizing big price swings.",
+      "timeframe": ["1h"],
+      "tags": ["stealth","accumulation","oi"],
+      "thresholds": {">": 5}
+    },
+    {
+      "id": "stealth_oi_accum_price_flat_build",
+      "name": "Stealth OI Accumulation (price-flat build)",
+      "alias": "Stealth OI Accum",
+      "formula": "PCHANGE(oi_1h[0,-1]) - 3*((PCHANGE(price_1h[0,-1])*PCHANGE(price_1h[0,-1]))/100)",
+      "goal": "More stringent ABS-free proxy for flat-price OI build (no ^, no ABS).",
+      "timeframe": ["1h"],
+      "tags": ["stealth","oi","risk"],
+      "thresholds": {">": 4}
+    },
+    {
+      "id": "stealth_oi_accum_1",
+      "name": "Stealth OI Accumulation 1 (>10)",
+      "alias": "OI Change 20h",
+      "formula": "PCHANGE(oi_1h[0,-20])",
+      "goal": "20h OI build window.",
+      "timeframe": ["1h"],
+      "tags": ["stealth","oi","htf"],
+      "thresholds": {">": 10}
+    },
+    {
+      "id": "stealth_oi_accum_2_price_flatness",
+      "name": "Stealth OI Accumulation 2 (price range <0.05)",
+      "alias": "Price flatness 20h",
+      "formula": "((MAX(price_1h[-20:-1]) - MIN(price_1h[-20:-1]))/(SMA(price_1h,20)[0]+0.001))",
+      "goal": "Flat price range over 20h while OI builds.",
+      "timeframe": ["1h"],
+      "tags": ["flat","validation"],
+      "thresholds": {"<": 0.05}
+    },
+    {
+      "id": "sustained_oi_growth",
+      "name": "Sustained OI Growth (>10)",
+      "alias": "Sustained OI Growth",
+      "formula": "PCHANGE(oi_1d[0,-5]) - PCHANGE(price_1d[0,-5])",
+      "goal": "Daily OI growth outpacing daily price change.",
+      "timeframe": ["1d"],
+      "tags": ["htf","oi","trend"],
+      "thresholds": {">": 10}
+    },
+    {
+      "id": "taker_sell_pressure_ratio_1h",
+      "name": "Taker Sell Pressure Ratio 1h (>0.55)",
+      "alias": "sell dom 1h",
+      "formula": "SUM(volsell_1h[0:-1])/(SUM(vol_1h[0:-1])+1)",
+      "goal": "Aggressive sell-side dominance on 1h.",
+      "timeframe": ["1h"],
+      "tags": ["sell-dom","risk","flow"],
+      "thresholds": {">": 0.55}
+    },
+    {
+      "id": "vol_spike_5m",
+      "name": "Vol spike > 500",
+      "alias": "vol spike",
+      "formula": "PCHANGE(vol_5m[0,-1])",
+      "goal": "Extremely sharp 5m volume expansion vs previous bar.",
+      "timeframe": ["5m"],
+      "tags": ["spike","volume","ignition"],
+      "thresholds": {">": 500}
+    }
+  ],
+  "csv_ingest_spec": {
+    "expected_headers": [
+      "timestamp","symbol",
+      "price_5m","price_1h","price_1d",
+      "highprice_5m","lowprice_5m",
+      "vol_5m","vol_1h","vol_1d",
+      "volbuy_5m","volsell_5m","volbuy_1h","volsell_1h",
+      "volspot_5m","volspot_1h",
+      "oi_5m","oi_1h","oi_1d",
+      "fr_5m","fr_1h","pfr_1h"
+    ],
+    "indexing_rules": {
+      "point_index": "[0]=latest bar; [-1]=previous bar; negative grows older",
+      "range_slices": "[-N:-1] is ascending oldest→latest subset; use ascending ranges",
+      "comma_indexing": "CHANGE/PCHANGE accept comma indices (e.g., PCHANGE(series[0,-12]))"
+    },
+    "validation": {
+      "char_limit": 300,
+      "allowed_funcs": ["SMA","EMA","AVG","SUM","MIN","MAX","ROC","RSI","CVD","CVDSPOT","CHANGE","PCHANGE"],
+      "forbidden": ["IF","AND","OR","SIGN","ABS","^","**"],
+      "denominator_guard": "all divisors must be wrapped with +1 or MAX(x,1)",
+      "spot_led_default": "when ranking ties, prefer spot-led signals"
+    },
+    "tf_limits": {
+      "5m": "≤300 bars (~25h)",
+      "1h": "≤90 bars (<4d)",
+      "1d": "≤90 bars (~3mo)"
+    },
+    "creation_hints": [
+      "Normalize flows by AVG(vol...) or per-range to avoid symbol-scale bias.",
+      "Replace absolute value with squared proxies: (x*x)/scale.",
+      "Replace exponentiation with repeated multiplication; no pow operator.",
+      "Keep lookbacks shallow to fit Coinalyze retention and char limits.",
+      "Prefer spot-led features (CVDSPOT, volspot) for early tells."
+    ],
+    "example_row_semantics": {
+      "CVD/CVDSPOT": "assumed precomputed cumulative delta series by TF, window=20, include_spot=true per examples",
+      "volume_fields": "vol = futures taker volume; volspot = spot volume; use volbuy/volsell for imbalance",
+      "funding": "fr_* is realized funding; pfr_* is predicted funding"
+    }
+  }
+}
